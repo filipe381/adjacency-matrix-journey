@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,12 @@ const Index = () => {
   const [adjacencyMatrix, setAdjacencyMatrix] = useState<number[][]>([]);
   const [startVertex, setStartVertex] = useState("");
   const [output, setOutput] = useState("");
+  const [graphTraversal, setGraphTraversal] = useState<{
+    nodes: string[];
+    edges: [number, number][];
+    traversalOrder: string;
+    visitOrder: number[];
+  } | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -46,6 +52,7 @@ const Index = () => {
     setN(vertices);
     setAdjacencyMatrix(createEmptyMatrix(vertices));
     setOutput("");
+    setGraphTraversal(null);
   };
 
   // Toggles edge in the adjacency matrix
@@ -53,6 +60,7 @@ const Index = () => {
     const newMatrix = [...adjacencyMatrix];
     newMatrix[i][j] = newMatrix[i][j] === 1 ? 0 : 1;
     setAdjacencyMatrix(newMatrix);
+    setGraphTraversal(null); // Reset visualization when graph changes
   };
 
   // Parse vertex input to numeric index
@@ -72,6 +80,29 @@ const Index = () => {
       return letters.indexOf(value);
     }
     return null;
+  };
+
+  // Generate the graph structure from adjacency matrix
+  const buildGraphStructure = (matrix: number[][], traversalSequence: number[], algorithm: string) => {
+    const n = matrix.length;
+    const nodes = Array(n).fill(0).map((_, i) => letters[i]);
+    const edges: [number, number][] = [];
+    
+    // Extract all edges from the adjacency matrix
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (matrix[i][j] === 1) {
+          edges.push([i, j]);
+        }
+      }
+    }
+    
+    return {
+      nodes,
+      edges,
+      traversalOrder: algorithm,
+      visitOrder: traversalSequence
+    };
   };
 
   // DFS with step-by-step output and backtracking
@@ -95,11 +126,14 @@ const Index = () => {
       return;
     }
     
-    const result = dfs(adjacencyMatrix, start);
+    const visitSequence: number[] = [];
+    const result = dfs(adjacencyMatrix, start, visitSequence);
     setOutput(result);
+    
+    setGraphTraversal(buildGraphStructure(adjacencyMatrix, visitSequence, 'DFS'));
   };
 
-  function dfs(matrix: number[][], start: number) {
+  function dfs(matrix: number[][], start: number, visitSequence: number[]) {
     const n = matrix.length;
     const visited = new Array(n).fill(false);
     const outputLines = [];
@@ -110,6 +144,7 @@ const Index = () => {
 
     function _dfs(u: number, depth: number) {
       visited[u] = true;
+      visitSequence.push(u);
       outputLines.push(indent(depth) + letters[u]);
 
       for(let v=0; v<n; v++) {
@@ -147,11 +182,14 @@ const Index = () => {
       return;
     }
     
-    const result = bfs(adjacencyMatrix, start);
+    const visitSequence: number[] = [];
+    const result = bfs(adjacencyMatrix, start, visitSequence);
     setOutput(result);
+    
+    setGraphTraversal(buildGraphStructure(adjacencyMatrix, visitSequence, 'BFS'));
   };
 
-  function bfs(matrix: number[][], start: number) {
+  function bfs(matrix: number[][], start: number, visitSequence: number[]) {
     const n = matrix.length;
     const visited = new Array(n).fill(false);
     const dist = new Array(n).fill(Infinity);
@@ -160,18 +198,20 @@ const Index = () => {
     visited[start] = true;
     dist[start] = 0;
     queue.push(start);
+    visitSequence.push(start);
 
-    const order = [];
+    const order = [letters[start]];
 
     while(queue.length > 0) {
       const u = queue.shift()!;
-      order.push(letters[u]);
 
       for(let v=0; v<n; v++) {
         if(matrix[u][v] === 1 && !visited[v]) {
           visited[v] = true;
           dist[v] = dist[u] + 1;
           queue.push(v);
+          visitSequence.push(v);
+          order.push(letters[v]);
         }
       }
     }
@@ -188,6 +228,140 @@ const Index = () => {
     }
     return out;
   }
+  
+  const renderGraphVisualization = () => {
+    if (!graphTraversal) return null;
+    
+    const { nodes, edges, traversalOrder, visitOrder } = graphTraversal;
+    
+    // Generate positions for the nodes in a circle layout
+    const nodePositions: {[key: string]: {x: number, y: number}} = {};
+    const radius = 120;
+    const centerX = 150;
+    const centerY = 150;
+    
+    nodes.forEach((node, i) => {
+      const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+      nodePositions[node] = {
+        x: centerX + radius * Math.cos(angle),
+        y: centerY + radius * Math.sin(angle)
+      };
+    });
+    
+    // Create a traversal path string like "A B C D E F"
+    const traversalPath = visitOrder.map(idx => letters[idx]).join(" → ");
+    
+    return (
+      <div className="mt-6">
+        <h3 className="font-semibold text-lg mb-2">
+          {traversalOrder} Visualization: {traversalPath}
+        </h3>
+        <div className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900/50 relative" style={{height: '300px'}}>
+          <svg width="100%" height="100%" viewBox="0 0 300 300" className="mx-auto">
+            {/* Draw edges first so they're beneath the nodes */}
+            {edges.map(([from, to], i) => {
+              const fromNode = letters[from];
+              const toNode = letters[to];
+              const fromPos = nodePositions[fromNode];
+              const toPos = nodePositions[toNode];
+              
+              // Calculate if this edge is part of the traversal path
+              let isTraversalEdge = false;
+              for (let i = 0; i < visitOrder.length - 1; i++) {
+                if (visitOrder[i] === from && visitOrder[i + 1] === to) {
+                  isTraversalEdge = true;
+                  break;
+                }
+              }
+              
+              // Draw an arrow
+              const dx = toPos.x - fromPos.x;
+              const dy = toPos.y - fromPos.y;
+              const angle = Math.atan2(dy, dx);
+              const nodeRadius = 20;
+              
+              // Adjust end points to account for node radius
+              const startX = fromPos.x + nodeRadius * Math.cos(angle);
+              const startY = fromPos.y + nodeRadius * Math.sin(angle);
+              const endX = toPos.x - nodeRadius * Math.cos(angle);
+              const endY = toPos.y - nodeRadius * Math.sin(angle);
+              
+              // Calculate arrowhead points
+              const arrowLength = 10;
+              const arrowWidth = 6;
+              const arrowAngle1 = angle + Math.PI - Math.PI / 6;
+              const arrowAngle2 = angle + Math.PI + Math.PI / 6;
+              const arrowX1 = endX + arrowLength * Math.cos(arrowAngle1);
+              const arrowY1 = endY + arrowLength * Math.sin(arrowAngle1);
+              const arrowX2 = endX + arrowLength * Math.cos(arrowAngle2);
+              const arrowY2 = endY + arrowLength * Math.sin(arrowAngle2);
+              
+              return (
+                <g key={`${from}-${to}`}>
+                  <line 
+                    x1={startX} 
+                    y1={startY} 
+                    x2={endX} 
+                    y2={endY} 
+                    stroke={isTraversalEdge ? '#4c6ef5' : '#ccc'} 
+                    strokeWidth={isTraversalEdge ? 2 : 1}
+                    strokeDasharray={isTraversalEdge ? "none" : "4,2"}
+                  />
+                  <polygon 
+                    points={`${endX},${endY} ${arrowX1},${arrowY1} ${arrowX2},${arrowY2}`}
+                    fill={isTraversalEdge ? '#4c6ef5' : '#ccc'}
+                  />
+                </g>
+              );
+            })}
+            
+            {/* Draw nodes */}
+            {nodes.map((node, i) => {
+              const pos = nodePositions[node];
+              const visitIndex = visitOrder.indexOf(i);
+              const isVisited = visitIndex !== -1;
+              
+              return (
+                <g key={node}>
+                  <circle 
+                    cx={pos.x} 
+                    cy={pos.y} 
+                    r="20" 
+                    fill={isVisited ? '#3b82f6' : '#e2e8f0'} 
+                    stroke="#1e40af"
+                    strokeWidth="2"
+                  />
+                  <text 
+                    x={pos.x} 
+                    y={pos.y} 
+                    textAnchor="middle" 
+                    dominantBaseline="middle" 
+                    fill={isVisited ? 'white' : 'black'} 
+                    fontWeight="bold"
+                    fontSize="14"
+                  >
+                    {node}
+                  </text>
+                  {isVisited && (
+                    <text 
+                      x={pos.x} 
+                      y={pos.y - 30} 
+                      textAnchor="middle" 
+                      fill="#1e40af" 
+                      fontSize="12"
+                      fontWeight="bold"
+                    >
+                      {visitIndex + 1}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="container py-8 px-4 max-w-4xl mx-auto">
@@ -231,6 +405,8 @@ const Index = () => {
             <div className="overflow-x-auto mt-4">
               <GraphMatrix matrix={adjacencyMatrix} toggleEdge={toggleEdge} />
             </div>
+            
+            {graphTraversal && renderGraphVisualization()}
           </div>
         </Card>
 
